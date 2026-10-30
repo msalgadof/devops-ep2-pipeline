@@ -1,0 +1,82 @@
+name: ep2-pipeline
+
+# Endurecimiento y logging comunes a todos los servicios
+x-common: &common
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  inventory-service:
+    <<: *common
+    build:
+      context: ./services/inventory-service
+    image: ${IMAGE_PREFIX:-ep2}/inventory-service:${IMAGE_TAG:-dev}
+    labels:
+      org.opencontainers.image.title: inventory-service
+      org.opencontainers.image.revision: ${GIT_SHA:-local}
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  orders-service:
+    <<: *common
+    build:
+      context: ./services/orders-service
+    image: ${IMAGE_PREFIX:-ep2}/orders-service:${IMAGE_TAG:-dev}
+    labels:
+      org.opencontainers.image.title: orders-service
+      org.opencontainers.image.revision: ${GIT_SHA:-local}
+    environment:
+      INVENTORY_URL: http://inventory-service:8000
+    ports:
+      - "127.0.0.1:${ORDERS_PORT:-8080}:8080"
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      inventory-service:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+        reservations:
+          memory: 256M
+
+networks:
+  # Acceso desde el host: solo orders-service
+  frontend: {}
+  # Red interna: sin salida a internet ni acceso desde el host. Aquí vive inventory-service
+  backend:
+    internal: true
