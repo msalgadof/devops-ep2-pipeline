@@ -11,7 +11,7 @@ RUN mvn -B -q package -DskipTests \
  && mkdir -p /layers/snapshot-dependencies
 
 # ---------- Etapa 2: runtime solo con JRE ----------
-FROM eclipse-temurin:21-jre-alpine AS runtime
+FROM eclipse-temurin:24-jre-alpine AS runtime
 RUN addgroup -S -g 10001 app && adduser -S -u 10001 -G app -H -s /sbin/nologin app
 WORKDIR /app
 
