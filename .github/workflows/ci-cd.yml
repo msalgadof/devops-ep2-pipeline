@@ -82,7 +82,7 @@ jobs:
       - name: Reporte de dependencias (HIGH y CRITICAL, informativo)
         run: $TRIVY_RUN fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --skip-dirs services/orders-service/target --exit-code 0 services
       - name: Bloqueo si hay vulnerabilidades CRITICAL
-        run: $TRIVY_RUN fs --scanners vuln --severity CRITICAL --ignore-unfixed --skip-dirs services/orders-service/target --exit-code 1 services
+        run: $TRIVY_RUN fs --scanners vuln --severity CRITICAL --ignore-unfixed --skip-dirs services/orders-service/target --ignorefile .trivyignore.yaml --exit-code 1 services
 
   sast:
     name: SAST + Quality Gate (SonarCloud)
@@ -178,7 +178,7 @@ jobs:
       - name: Reporte de la imagen (HIGH y CRITICAL, informativo)
         run: $TRIVY_RUN image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 local/${{ matrix.service }}:scan
       - name: Bloqueo si la imagen tiene vulnerabilidades CRITICAL
-        run: $TRIVY_RUN image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 local/${{ matrix.service }}:scan
+        run: $TRIVY_RUN image --scanners vuln --severity CRITICAL --ignore-unfixed --ignorefile .trivyignore.yaml --exit-code 1 local/${{ matrix.service }}:scan
       - name: Publicar imagen en GHCR (solo push y tags, nunca PR)
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v6

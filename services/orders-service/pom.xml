@@ -18,6 +18,8 @@
 
   <properties>
     <java.version>21</java.version>
+    <!-- Override del BOM de Spring Boot: Tomcat 10.1.55 trae CVEs CRITICAL -->
+    <tomcat.version>10.1.59</tomcat.version>
     <jacoco.version>0.8.12</jacoco.version>
     <coverage.minimum>0.80</coverage.minimum>
   </properties>
