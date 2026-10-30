@@ -166,7 +166,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
       - name: Build local de la imagen (para escanearla antes de publicar)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/${{ matrix.service }}
           load: true
@@ -181,7 +181,7 @@ jobs:
         run: $TRIVY_RUN image --scanners vuln --severity CRITICAL --ignore-unfixed --ignorefile .trivyignore.yaml --exit-code 1 local/${{ matrix.service }}:scan
       - name: Publicar imagen en GHCR (solo push y tags, nunca PR)
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/${{ matrix.service }}
           push: true
