@@ -1,0 +1,9 @@
+target/
+.mvn/
+*.class
+src/test/
+Dockerfile
+.dockerignore
+.git
+.env
+.idea/
