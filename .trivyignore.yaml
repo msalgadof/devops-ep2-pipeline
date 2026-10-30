@@ -1,0 +1,9 @@
+# Excepciones de seguridad aceptadas (revisar al vencimiento).
+# Spring Framework 6.2.x no tiene parche open source: la corrección existe solo en 7.0.9 (Spring Boot 4.x).
+vulnerabilities:
+  - id: CVE-2026-47884
+    statement: "RCE en XsltView. orders-service es una API REST/JSON y no usa vistas XSLT."
+    expired_at: 2026-12-31
+  - id: CVE-2026-47890
+    statement: "Corrupción de SSE con vistas. orders-service no expone SSE ni renderiza vistas."
+    expired_at: 2026-12-31
