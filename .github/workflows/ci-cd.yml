@@ -1,0 +1,256 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Trivy fijado a una versión (reproducible). El volumen nombrado cachea la BD de vulnerabilidades
+  TRIVY_RUN: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache/ -v ${{ github.workspace }}:/src -w /src aquasec/trivy:0.58.1
+
+jobs:
+  # ---------------------------------------------------------------- 1. Lint + pruebas
+  test-inventory:
+    name: Test inventory-service
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/inventory-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/inventory-service/requirements-dev.txt
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: python -m ruff check .
+      - name: Pruebas unitarias + umbral de cobertura (80%)
+        run: python -m pytest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-inventory-service
+          path: services/inventory-service/coverage.xml
+          retention-days: 14
+
+  test-orders:
+    name: Test orders-service
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Pruebas unitarias + JaCoCo (umbral 80%)
+        run: mvn -B verify
+        working-directory: services/orders-service
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orders-build
+          path: |
+            services/orders-service/target/classes
+            services/orders-service/target/site/jacoco
+            services/orders-service/target/surefire-reports
+          retention-days: 14
+
+  # ---------------------------------------------------------------- 2. Seguridad
+  dependency-scan:
+    name: Dependency scan (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reporte de dependencias (HIGH y CRITICAL, informativo)
+        run: $TRIVY_RUN fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --skip-dirs services/orders-service/target --exit-code 0 services
+      - name: Bloqueo si hay vulnerabilidades CRITICAL
+        run: $TRIVY_RUN fs --scanners vuln --severity CRITICAL --ignore-unfixed --skip-dirs services/orders-service/target --exit-code 1 services
+
+  sast:
+    name: SAST + Quality Gate (SonarCloud)
+    needs: [test-inventory, test-orders]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage-inventory-service
+          path: services/inventory-service
+      - uses: actions/download-artifact@v4
+        with:
+          name: orders-build
+          path: services/orders-service/target
+      - name: Normalizar rutas de coverage.xml para Sonar
+        run: |
+          sed -i -e '/<source>/d' \
+                 -e 's|filename="|filename="services/inventory-service/|g' \
+                 services/inventory-service/coverage.xml
+      - name: Verificar SONAR_TOKEN
+        # Los PRs de Dependabot no reciben secretos: se omite el escaneo en ese caso
+        if: github.actor != 'dependabot[bot]'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::Falta el secreto SONAR_TOKEN (gh secret set SONAR_TOKEN)"; exit 1
+          fi
+      - name: Escaneo SonarCloud + Quality Gate (bloquea si falla)
+        if: github.actor != 'dependabot[bot]'
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          args: >
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+
+  # ---------------------------------------------------------------- 3. Build, escaneo de imagen y publicación
+  build-images:
+    name: Build & scan (${{ matrix.service }})
+    needs: [sast, dependency-scan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [inventory-service, orders-service]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dueño del registro en minúsculas
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v3
+      - name: Login en GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Metadatos y tags (trazabilidad)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.OWNER }}/${{ matrix.service }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build local de la imagen (para escanearla antes de publicar)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          load: true
+          tags: local/${{ matrix.service }}:scan
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          provenance: false
+      - name: Reporte de la imagen (HIGH y CRITICAL, informativo)
+        run: $TRIVY_RUN image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 local/${{ matrix.service }}:scan
+      - name: Bloqueo si la imagen tiene vulnerabilidades CRITICAL
+        run: $TRIVY_RUN image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 local/${{ matrix.service }}:scan
+      - name: Publicar imagen en GHCR (solo push y tags, nunca PR)
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          provenance: false
+
+  # ---------------------------------------------------------------- 4. Despliegue simulado + smoke test
+  deploy-simulated:
+    name: Deploy simulado (Docker Compose)
+    needs: build-images
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: simulated-cloud
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Variables de despliegue (imagen = commit exacto)
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "OWNER=${OWNER}"
+            echo "IMAGE_PREFIX=ghcr.io/${OWNER}"
+            echo "IMAGE_TAG=sha-${GITHUB_SHA::7}"
+            echo "GIT_SHA=${GITHUB_SHA}"
+          } >> "$GITHUB_ENV"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Descargar las imágenes publicadas por este commit
+        run: docker compose pull
+      - name: Levantar el entorno (sin reconstruir) y esperar healthchecks
+        run: docker compose up -d --no-build --wait --wait-timeout 180
+      - name: Smoke test
+        run: ./scripts/smoke-test.sh
+      - name: Verificar trazabilidad (la imagen desplegada viene de este commit)
+        run: |
+          for svc in inventory-service orders-service; do
+            rev=$(docker image inspect "${IMAGE_PREFIX}/${svc}:${IMAGE_TAG}" \
+                  --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+            echo "${svc}: revision=${rev}"
+            [ "${rev}" = "${GITHUB_SHA}" ] || { echo "::error::${svc} no corresponde al commit ${GITHUB_SHA}"; exit 1; }
+          done
+      - name: Logs si algo falló
+        if: failure()
+        run: docker compose logs --tail=100
+      - name: Resumen de trazabilidad
+        if: always()
+        run: |
+          {
+            echo "## Despliegue simulado"
+            echo ""
+            echo "| Campo | Valor |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Ref | \`${GITHUB_REF_NAME}\` |"
+            echo "| Autor | ${GITHUB_ACTOR} |"
+            echo "| Tag de imagen | \`${IMAGE_TAG}\` |"
+            echo "| inventory-service | \`${IMAGE_PREFIX}/inventory-service:${IMAGE_TAG}\` |"
+            echo "| orders-service | \`${IMAGE_PREFIX}/orders-service:${IMAGE_TAG}\` |"
+            echo "| Run | ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Limpiar entorno
+        if: always()
+        run: docker compose down -v

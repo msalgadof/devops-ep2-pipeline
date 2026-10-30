@@ -16,7 +16,7 @@ expect() { # descripción, payload, código esperado
   local code
   code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE_URL}/orders" \
          -H 'Content-Type: application/json' -d "$2")
-  if [ "$code" = "$3" ]; then
+  if [[ "$code" = "$3" ]]; then
     echo "[OK]    $1 → $code"
   else
     echo "[FALLO] $1 → esperado $3, obtenido $code"
@@ -29,5 +29,5 @@ expect "sin stock"            '{"itemId":2,"quantity":1}'  409
 expect "item inexistente"     '{"itemId":99,"quantity":1}' 404
 expect "cantidad inválida"    '{"itemId":1,"quantity":0}'  400
 
-[ "$fails" -eq 0 ] && echo "SMOKE TEST OK" || echo "SMOKE TEST: ${fails} fallo(s)"
+[[ "$fails" -eq 0 ]] && echo "SMOKE TEST OK" || echo "SMOKE TEST: ${fails} fallo(s)"
 exit "$fails"

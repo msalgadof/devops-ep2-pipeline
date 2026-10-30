@@ -33,8 +33,8 @@ check "build inventory-service" docker build -q -t inventory-service:dev service
 check "build orders-service"    docker build -q -t orders-service:dev services/orders-service
 
 echo "== 5. Usuario no-root =="
-[ "$(docker run --rm --entrypoint id inventory-service:dev -u 2>/dev/null)" = "10001" ] && ok "inventory-service UID 10001" || fail "inventory-service UID"
-[ "$(docker run --rm --entrypoint id orders-service:dev -u 2>/dev/null)" = "10001" ] && ok "orders-service UID 10001" || fail "orders-service UID"
+[[ "$(docker run --rm --entrypoint id inventory-service:dev -u 2>/dev/null)" = "10001" ]] && ok "inventory-service UID 10001" || fail "inventory-service UID"
+[[ "$(docker run --rm --entrypoint id orders-service:dev -u 2>/dev/null)" = "10001" ]] && ok "orders-service UID 10001" || fail "orders-service UID"
 
 echo "== 6. Prueba end-to-end =="
 docker network create ep2-net >/dev/null
@@ -44,20 +44,20 @@ for i in $(seq 1 40); do
   curl -sf localhost:8080/actuator/health >/dev/null 2>&1 && break; sleep 2
 done
 post() { curl -s -o /dev/null -w "%{http_code}" -X POST localhost:8080/orders -H 'Content-Type: application/json' -d "$1"; }
-[ "$(post '{"itemId":1,"quantity":2}')"  = "201" ] && ok "pedido con stock → 201"        || fail "pedido con stock"
-[ "$(post '{"itemId":2,"quantity":1}')"  = "409" ] && ok "sin stock → 409"               || fail "sin stock"
-[ "$(post '{"itemId":99,"quantity":1}')" = "404" ] && ok "item inexistente → 404"        || fail "item inexistente"
-[ "$(post '{"itemId":1,"quantity":0}')"  = "400" ] && ok "cantidad inválida → 400"       || fail "cantidad inválida"
+[[ "$(post '{"itemId":1,"quantity":2}')"  = "201" ]] && ok "pedido con stock → 201"        || fail "pedido con stock"
+[[ "$(post '{"itemId":2,"quantity":1}')"  = "409" ]] && ok "sin stock → 409"               || fail "sin stock"
+[[ "$(post '{"itemId":99,"quantity":1}')" = "404" ]] && ok "item inexistente → 404"        || fail "item inexistente"
+[[ "$(post '{"itemId":1,"quantity":0}')"  = "400" ]] && ok "cantidad inválida → 400"       || fail "cantidad inválida"
 sleep 12
 for s in inventory-service orders-service; do
-  [ "$(docker inspect -f '{{.State.Health.Status}}' $s 2>/dev/null)" = "healthy" ] && ok "$s healthcheck healthy" || fail "$s healthcheck"
+  [[ "$(docker inspect -f '{{.State.Health.Status}}' $s 2>/dev/null)" = "healthy" ]] && ok "$s healthcheck healthy" || fail "$s healthcheck"
 done
 
 echo "== 7. Git =="
-[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ] && ok "no estás trabajando sobre main" || fail "estás en main"
+[[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]] && ok "no estás trabajando sobre main" || fail "estás en main"
 git diff --quiet && git diff --cached --quiet && ok "sin cambios sin commitear" || fail "hay cambios sin commitear"
 git ls-remote --exit-code origin >/dev/null 2>&1 && ok "remoto accesible" || fail "remoto"
 
 echo
-[ "$FAILS" -eq 0 ] && echo "TODO OK → listo para la Fase 4" || echo "$FAILS fallo(s) → revisa arriba"
+[[ "$FAILS" -eq 0 ]] && echo "TODO OK → listo para la Fase 4" || echo "$FAILS fallo(s) → revisa arriba"
 exit "$FAILS"
