@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # ---------- Etapa 1: build de dependencias ----------
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 RUN python -m venv /opt/venv
@@ -10,7 +10,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 # ---------- Etapa 2: runtime mínimo ----------
-FROM python:3.12-slim AS runtime
+FROM python:3.15-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
